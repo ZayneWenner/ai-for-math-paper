@@ -1,0 +1,449 @@
+% =====================================================================
+% paper.tex  —  From Natural Language to Verifiable Reasoning:
+%               A Semantic Reduction Framework for Reliable AI Mathematics
+%
+% Submission-ready LaTeX source (pdflatex / xelatex compatible).
+% Compile:  pdflatex paper && bibtex paper && pdflatex paper && pdflatex paper
+%
+% All factual claims in this manuscript are grounded in the cited literature;
+% AI-assisted drafting is logged in AI日志.md.
+% =====================================================================
+
+\documentclass[11pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, citecolor=blue, linkcolor=blue, urlcolor=blue}
+
+\title{From Natural Language to Verifiable Reasoning:\\
+A Semantic Reduction Framework for Reliable AI Mathematics}
+
+\author{贾静文\\
+郑州西亚斯学院\\
+\texttt{3881471857@qq.com}}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+
+% ---------------------------------------------------------------------
+\begin{abstract}
+Large language models (LLMs) can now produce mathematical reasoning that \emph{looks}
+correct yet is frequently wrong. Reliability in AI for Mathematics (AI4Math) therefore
+cannot rest on the plausibility of natural-language (NL) text alone. We argue that
+trustworthy mathematical AI requires an explicit \emph{semantic reduction layer} that
+translates NL reasoning into a typed, machine-checkable intermediate representation
+(IR) before verification. We formalize a three-layer model---Generation, Semantic
+Reduction, Verification---and identify the semantic reduction layer as the central
+bottleneck: most failures originate there, not in generation or verification. We then
+propose a concrete framework built on a \emph{Typed IR} (with a type system, operational
+semantics, constraints, and a compositional structure) and a four-stage pipeline
+(NL $\rightarrow$ IR $\rightarrow$ verification $\rightarrow$ NL rendering) with a
+bidirectional-consistency requirement that guarantees interpretability and
+traceability. Beyond standard accuracy, we define two additional reliability metrics---
+\emph{verifiability} and \emph{consistency}---that bound what a correctness claim may
+legitimately assert. We map our framework onto real systems (Draft--Sketch--Prove,
+LeanDojo/ReProver, Math-Shepherd, AlphaGeometry) and distill a practical
+\emph{reliability checklist}. This is a framework / position paper: the contribution is
+conceptual and methodological, accompanied by a validation protocol rather than a new
+large-scale empirical result.
+\end{abstract}
+
+% ---------------------------------------------------------------------
+\section{Introduction}
+\label{sec:intro}
+
+\paragraph{Background.}
+Large language models such as GPT-4 and Claude have demonstrated surprising competence
+on mathematical reasoning benchmarks when paired with chain-of-thought (CoT)
+prompting~\cite{wei2022chain} and search/self-consistency
+strategies~\cite{yao2023tree}. Yet the same models routinely emit proofs and derivations
+that are fluent, locally plausible, and globally invalid---a phenomenon often called
+\emph{hallucination} in mathematical contexts.
+
+\paragraph{Problem.}
+Natural-language reasoning is \emph{not directly verifiable}. A paragraph of CoT has no
+formal semantics: nothing in the text guarantees that each inference step preserves
+truth, that defined terms are used consistently, or that the final answer follows from
+the premises. This is the core \emph{reliability} (or trustworthiness) problem of
+AI4Math.
+
+\paragraph{Current approaches.}
+Today's systems address reliability in two ways. The first is \emph{pure generation}:
+train or prompt an LLM to reason and hope the answer is right. The second is
+\emph{post-hoc verification}: check the output after the fact using proof assistants
+(Coq, Lean, Agda), symbolic solvers (SMT), or learned verifiers / reward
+models~\cite{cobbe2021training,lightman2024lets,wang2024mathshepherd}.
+
+\paragraph{Thesis.}
+We contend that reliability cannot rely \emph{solely} on final verification. Post-hoc
+checking only works if the claim has already been expressed in a form a checker can
+consume; if the gap between NL and that form is unstable, verification has no anchor.
+We therefore argue for an intermediate \emph{semantic reduction layer} as a first-class
+system component.
+
+\paragraph{Contributions.}
+\begin{enumerate}
+    \item We formalize a \textbf{three-layer model} of reliable AI mathematics
+          (Generation / Semantic Reduction / Verification) and argue, with a concrete
+          failure analysis, that the \textbf{semantic reduction layer is the central
+          bottleneck}.
+    \item We propose a \textbf{Typed IR} design (type system, operational semantics,
+          constraints, compositional structure) and a four-stage
+          \textbf{pipeline} with a \textbf{bidirectional-consistency} requirement.
+    \item We define two reliability metrics beyond accuracy---
+          \textbf{verifiability} and \textbf{consistency}---that make the boundary of
+          any correctness claim explicit.
+    \item We synthesize a practical \textbf{reliability checklist} mapping each threat
+          class (search, formalization, evaluation) to a concrete mechanism.
+\end{enumerate}
+
+% ---------------------------------------------------------------------
+\section{A Three-Layer Model of Reliable AI Mathematics}
+\label{sec:model}
+
+We decompose a reliable AI mathematics system into three layers. The structure is
+illustrated in Figure~\ref{fig:layers}.
+
+\begin{figure}[t]
+\centering
+\fbox{\parbox{0.92\linewidth}{\centering
+\textbf{Generation Layer} \\ (LLM, Natural-Language Chain-of-Thought) \\[2pt]
+\small probabilistic $\cdot$ untyped $\cdot$ informal
+}}
+\\[5pt] $\downarrow$ \\[5pt]
+\fbox{\parbox{0.92\linewidth}{\centering
+\textbf{Semantic Reduction Layer} \\ (Typed IR: DSL / AST / Proof Object / Workflow Graph) \\[2pt]
+\small \emph{--- bottleneck ---} ambiguity $\cdot$ missing typing $\cdot$ non-invertibility
+}}
+\\[5pt] $\downarrow$ \\[5pt]
+\fbox{\parbox{0.92\linewidth}{\centering
+\textbf{Verification Layer} \\ (Coq / Lean / Agda / SMT / symbolic solvers) \\[2pt]
+\small consistency $\cdot$ derivability $\cdot$ factual grounding $\cdot$ constraint satisfaction
+}}
+\caption{The three-layer model. Reliability fails most often at the \emph{semantic
+reduction layer} (middle), not at generation or verification.}
+\label{fig:layers}
+\end{figure}
+
+\subsection{Generation Layer}
+\label{sec:gen}
+The generation layer produces natural-language reasoning---typically a chain of
+thought~\cite{wei2022chain} or a tree of thought~\cite{yao2023tree}. Its defining
+properties are that it is \textbf{probabilistic} (outputs are sampled, not derived),
+\textbf{untyped} (no formal guarantee that objects are well-formed), and
+\textbf{informal} (no binding semantics). It is the interface through which humans
+state problems and read answers, but by itself it provides no reliability guarantee.
+
+\subsection{Semantic Reduction Layer}
+\label{sec:reduction}
+The semantic reduction layer translates natural language into a structured, typed
+representation. Candidate target forms include:
+\begin{itemize}
+    \item \textbf{Logical formulae} (first-order / higher-order logic);
+    \item \textbf{Programs} (Python or a domain-specific language, DSL);
+    \item \textbf{Proof objects} (e.g., Lean/Coq proof terms);
+    \item \textbf{Typed intermediate representations (IR)} / abstract syntax trees
+          (AST) / workflow graphs.
+\end{itemize}
+Its theoretical grounding is the \textbf{Curry--Howard correspondence}
+\cite{howard1980formulae,sorensen2006lectures}, which identifies proofs with typed
+programs and propositions with types---precisely the bridge that lets an informal
+argument become a checkable object. This layer, however, faces three intrinsic
+challenges:
+\begin{itemize}
+    \item \textbf{Ambiguity}: a single NL sentence may admit several formal readings;
+    \item \textbf{Missing typing}: NL rarely states the types of objects, so the IR
+          must recover or impose them;
+    \item \textbf{Non-invertibility}: mapping NL $\rightarrow$ IR is lossy and not
+          uniquely reversible, so traceability must be engineered explicitly.
+\end{itemize}
+
+\subsection{Verification Layer}
+\label{sec:verify}
+The verification layer checks the reduced object in a formal system. It establishes:
+\begin{itemize}
+    \item \textbf{Consistency} (no contradiction is introduced);
+    \item \textbf{Derivability} (the conclusion follows from the premises under the
+          system's inference rules);
+    \item \textbf{Factual grounding} (constants and references match an accepted body
+          of mathematics);
+    \item \textbf{Constraint satisfaction} (stated side-conditions hold).
+\end{itemize}
+Tools range from proof assistants (Coq, Agda, Lean) to SMT and symbolic solvers.
+
+% ---------------------------------------------------------------------
+\section{The Bottleneck: Why Semantic Reduction Fails First}
+\label{sec:bottleneck}
+
+We now make the central empirical claim of this paper: \textbf{most reliability
+failures in current AI4Math systems originate in the semantic reduction layer, not in
+generation or verification.}
+
+\paragraph{Argument.}
+Verification depends on a \emph{computable object} it can manipulate. Generation can be
+made more fluent and verification can be made stricter, but neither helps if the NL
+$\rightarrow$ formal mapping is unstable. When that mapping is unstable:
+\begin{enumerate}
+    \item the verification layer has \textbf{no anchor}---it is asked to check an
+          object that was never cleanly produced; and
+    \item \textbf{hallucinations persist}---an invalid step that survives reduction is
+          invisible to a checker that only sees the (malformed) object.
+\end{enumerate}
+This is consistent with reported experience in neural theorem proving, where the
+dominant obstacle is turning an informal or LLM-generated sketch into a form a prover
+accepts~\cite{jiang2023draft,yang2023leandojo}, rather than the prover's search power
+per se. It also explains why even strong LLMs (e.g., GPT-4) fare poorly as direct
+tactic generators on formal libraries~\cite{yang2023leandojo}, while a retrieval-augmented
+prover that \emph{anchors} each step in accessible library premises performs far better.
+
+\paragraph{Design implication.}
+Investment should be rebalanced toward the reduction layer: better type reconstruction,
+disambiguation, and invertibility-preserving encodings. We develop such a design in the
+next section.
+
+% ---------------------------------------------------------------------
+\section{Proposed Framework}
+\label{sec:framework}
+
+\subsection{Typed Intermediate Representation (IR)}
+\label{sec:ir}
+We propose a single \textbf{Typed IR} as the lingua franca between generation and
+verification. It is specified by four components:
+\begin{itemize}
+    \item \textbf{Type system}: every node carries a type, so ill-formed objects are
+          rejected at construction time;
+    \item \textbf{Operational semantics}: each construct has a defined meaning, enabling
+          deterministic evaluation and symbolic simplification;
+    \item \textbf{Constraints}: domain side-conditions (e.g., denominators non-zero,
+          domains of definition) are first-class edges in the graph;
+    \item \textbf{Compositional structure}: a graph / AST that can be built, split, and
+          recomposed modularly.
+\end{itemize}
+Candidate concrete forms are a DSL, an AST, explicit proof objects, or a workflow
+graph; the choice is orthogonal to the four components above.
+
+\subsection{The Pipeline}
+\label{sec:pipeline}
+Figure~\ref{fig:pipeline} shows the end-to-end pipeline. The key design principle is
+that \textbf{natural language is only an interface; the IR is the execution core}.
+
+\begin{figure}[t]
+\centering
+\fbox{Natural Language (LLM)}
+\;\xrightarrow{\text{reduce}}\;
+\fbox{Typed IR}
+\;\xrightarrow{\text{verify}}\;
+\fbox{Formal Verification}
+\;\xrightarrow{\text{render}}\;
+\fbox{NL Rendering}
+\caption{End-to-end pipeline. The typed IR is the execution core that anchors
+verification and enables traceability back to the original NL claim.}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{Bidirectional Consistency}
+\label{sec:bidir}
+For the IR to be trustworthy, two properties must hold between IR and NL:
+\begin{itemize}
+    \item \textbf{Interpretability}: a human can read the IR and understand the reasoning;
+    \item \textbf{Traceability}: every IR node maps back to a span of the original NL,
+          and every NL claim maps to IR nodes.
+\end{itemize}
+Bidirectional consistency is what prevents the reduction layer from becoming an
+opaque, unaccountable translator---the very failure mode identified in
+Section~\ref{sec:bottleneck}.
+
+% ---------------------------------------------------------------------
+\section{Related Work}
+\label{sec:related}
+
+We situate our framework among four lines of research.
+
+\paragraph{LLM + tools / reasoning strategies.}
+Chain-of-thought~\cite{wei2022chain} and tree-of-thoughts~\cite{yao2023tree} improve
+generation; Toolformer~\cite{schick2023toolformer} and program-of-thoughts
+prompting~\cite{chen2022program} let models call calculators and code interpreters.
+These reduce but do not eliminate the verification gap.
+
+\paragraph{Proof assistants and neural theorem proving.}
+Early work (GPT-f) trained models to produce proof steps~\cite{polu2020generating};
+Hypertree Proof Search scaled neural proving in Lean~\cite{lample2022hypertree};
+Draft--Sketch--Prove maps informal proofs to formal sketches that guide a
+prover~\cite{jiang2023draft}; LeanDojo/ReProver adds retrieval over the math library
+and open tooling~\cite{yang2023leandojo}; autoformalization translates NL statements into
+formal ones directly~\cite{wu2022autoformalization}. Our framework generalizes the
+\emph{translator} role in these systems into a first-class, typed component.
+
+\paragraph{Neuro-symbolic systems.}
+AlphaGeometry combines a neural solver with a symbolic deduction engine for olympiad
+geometry~\cite{trinh2024alphageometry}---a existence proof that a neuro-symbolic split,
+with the symbolic side as the verifier, can reach human-competitive results.
+
+\paragraph{Learned verification / reward models.}
+Outcome verifiers~\cite{cobbe2021training}, process reward models~\cite{lightman2024lets},
+and automatic process supervision (Math-Shepherd)~\cite{wang2024mathshepherd} score
+intermediate steps. These are verifiers in our sense (Layer~3), and they are exactly why
+a stable Layer~2 matters: a process reward model can only supervise steps that have a
+well-defined form.
+
+\paragraph{Our difference.}
+Prior work treats the NL$\rightarrow$formal translation as a subroutine. We elevate the
+\emph{semantic reduction layer} to the central architectural component and argue it is
+the dominant bottleneck.
+
+% ---------------------------------------------------------------------
+\section{Applications}
+\label{sec:apps}
+
+\paragraph{Automated theorem proving (ATP).}
+An LLM drafts a proof \emph{sketch}; the sketch is reduced to a typed IR; the IR is
+checked in Coq/Lean. This is the pattern of Draft--Sketch--Prove~\cite{jiang2023draft},
+which raised success on competition problems from 20.9\% to 39.3\% by anchoring search
+in a formal sketch.
+
+\paragraph{Math problem solving.}
+A word problem is reduced to a symbolic program (e.g., via program-of-thoughts
+prompting~\cite{chen2022program}), executed by a solver, and the result rendered back.
+The IR here is the program, which is independently executable and checkable.
+
+\paragraph{AI education.}
+A student's answer is reduced to an IR and graded against a reference IR, enabling
+transparent, step-level feedback rather than a black-box score.
+
+% ---------------------------------------------------------------------
+\section{Evaluation}
+\label{sec:eval}
+
+We report \textbf{published baselines} (clearly attributed) to locate the framework, and
+we define two metrics that make reliability claims explicit. We do \emph{not} claim a
+new large-scale empirical result; the contribution is the framework and the protocol.
+
+\subsection{Benchmarks and Published Baselines}
+\label{sec:bench}
+Standard benchmarks are GSM8K and the MATH dataset~\cite{hendrycks2021measuring}
+for word problems, and MiniF2F~\cite{zheng2021minif2f} / the LeanDojo Benchmark for
+formal proving. Representative published numbers:
+\begin{itemize}
+    \item On GSM8K, process RL with Math-Shepherd lifts Mistral-7B from 77.9\% to
+          84.1\%, and verification lifts it further to 89.1\%; on MATH the comparable
+          figures are 28.6\% $\rightarrow$ 33.0\% $\rightarrow$ 43.5\%~\cite{wang2024mathshepherd}.
+    \item On MiniF2F, ReProver (LeanDojo) achieves 26.5\% Pass@1 and beats GPT-4 as a
+          tactic generator; on the LeanDojo Benchmark it reaches 51.2\% (random split)
+          and 26.3\% (novel-premise split)~\cite{yang2023leandojo}.
+    \item On formal competition problems, Draft--Sketch--Prove improves from 20.9\% to
+          39.3\% by using an informal$\rightarrow$formal sketch~\cite{jiang2023draft}.
+\end{itemize}
+These gains are all \emph{attributable to strengthening a link between generation and
+verification}---precisely the reduction layer we foreground.
+
+\subsection{Reliability Metrics Beyond Accuracy}
+\label{sec:metrics}
+Let a system be evaluated on $N$ problems. Define:
+\begin{itemize}
+    \item \textbf{Accuracy}
+          $A = \frac{1}{N}\sum_{i=1}^{N}\mathbb{1}[\text{final answer of }i\text{ is correct}].$
+    \item \textbf{Verifiability}
+          $V = \frac{1}{N}\sum_{i=1}^{N}\mathbb{1}[\text{a machine-checkable derivation for }i\text{ exists}].$
+    \item \textbf{Consistency} (over the $N_V$ derivable problems)
+          $C = \frac{1}{N_V}\sum_{i:\text{ derivable}}\mathbb{1}[\text{NL explanation and formal derivation agree step-wise}].$
+\end{itemize}
+Accuracy alone can be high while $V$ and $C$ are low (a confident but uncheckable
+answer). The framework's promise is to raise $V$ and $C$, bounding what a correctness
+claim may assert: a claim is only as reliable as the weakest of $(A, V, C)$.
+
+\begin{table}[t]
+\centering
+\caption{Reliability metrics and what each bounds.}
+\label{tab:metrics}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Metric & Measures & Bound it imposes \\
+\midrule
+Accuracy ($A$) & final answer correctness & ``Is the output right?'' \\
+Verifiability ($V$) & existence of a checkable derivation & ``Can we even check it?'' \\
+Consistency ($C$) & NL $\leftrightarrow$ IR agreement & ``Does the story match the proof?'' \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Illustrative Validation}
+\label{sec:illustrative}
+To show how the reduction layer catches what NL self-checks miss, consider a constructed
+example (a \emph{worked illustration}, not a benchmark result). A fluent NL proof might
+assert the identity
+\begin{equation}
+\frac{1}{a-b} = \frac{1}{a} - \frac{1}{b}\qquad(\text{false, in general}).
+\end{equation}
+A natural-language self-check can be talked into accepting it. Reduced to the typed IR
+(an expression tree with the constraint $a\neq b,\ a\neq 0,\ b\neq 0$), a symbolic
+simplifier cross-multiplies and obtains $ab = -(a-b)^2$, which is not an identity. The
+verification layer therefore \emph{refutes} the claim, whereas the NL layer did not.
+This is exactly the failure mode the framework is designed to intercept.
+
+\subsection{A Practical Reliability Checklist}
+\label{sec:checklist}
+\begin{table}[t]
+\centering
+\caption{Reliability checklist: threat $\rightarrow$ layer $\rightarrow$ mechanism $\rightarrow$ tool.}
+\label{tab:checklist}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Threat & Layer & Mechanism & Example tool \\
+\midrule
+Wrong final answer & Generation & sampling + search & ToT~\cite{yao2023tree} \\
+Untyped / ill-formed & Reduction & type system & Typed IR \\
+Ambiguous reading & Reduction & disambiguation & autoformalization~\cite{wu2022autoformalization} \\
+Untraceable claim & Reduction & bidirectional consistency & IR $\leftrightarrow$ NL map \\
+Invalid step & Verification & proof checking & Lean / Coq \\
+Wrong fact & Verification & factual grounding & math library lookup \\
+Ungeneralizable & Evaluation & novel-split benchmark & LeanDojo Bench.~\cite{yang2023leandojo} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------
+\section{Discussion}
+\label{sec:discussion}
+
+\paragraph{Limitations.}
+The Typed IR is non-trivial to design, and semantic mapping from NL remains costly;
+non-invertibility means perfect traceability is aspirational. We also acknowledge the
+framework is a conceptual contribution: we report no new large-scale SOTA and rely on
+attributed published numbers.
+
+\paragraph{Scope and boundaries.}
+Our claims are bounded. We do \emph{not} assert that every AI4Math task needs full
+formal verification---only that any reliability claim should make its $(A,V,C)$ profile
+explicit. For low-stakes arithmetic, a calculator call may suffice; for theorem proving,
+full formal checking is warranted.
+
+\paragraph{Extensions.}
+The three-layer decomposition generalizes beyond mathematics to any domain where NL
+must become verified action (code generation, agent planning). Retrieval-augmented
+provers~\cite{yang2023leandojo} already hint at agent-style architectures where the IR
+node is a tool call.
+
+% ---------------------------------------------------------------------
+\section{Conclusion}
+\label{sec:conclusion}
+
+We argued that reliable AI reasoning equals \textbf{generation + semantic reduction +
+verification}, and that the \emph{semantic reduction layer} is the under-served
+bottleneck. We proposed a Typed IR and a four-stage pipeline with bidirectional
+consistency, defined verifiability and consistency as explicit reliability metrics, and
+distilled a practical checklist. Real systems already validate the pieces; what is
+missing is treating reduction as a first-class, typed component. Future work is to build
+and empirically stress-test a reference Typed IR across the three application domains.
+
+% ---------------------------------------------------------------------
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}
